@@ -1,0 +1,149 @@
+import socket
+import io
+import pyautogui
+import logging
+
+from protocol import send_line, recv_line
+
+
+logging.basicConfig(
+    filename="client.log",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+logging.info("Client starting...")
+
+IP = "127.0.0.1"
+PORT = 8820
+
+
+
+
+def take_screenshot_and_send(sock):
+
+    assert sock is not None, "Socket must not be None"
+
+    logging.info("Taking screenshot...")
+
+    # צילום המסך
+    try:
+        image = pyautogui.screenshot()
+        logging.info("Screenshot taken successfully")
+    except Exception as e:
+        logging.error(f"Failed taking screenshot: {e}")
+        return
+
+    # שמירה ל-buffer כ-JPEG והוצאת bytes
+    try:
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG")
+        img_bytes = buffer.getvalue()
+        img_size = len(img_bytes)
+        logging.info("Screenshot saved to buffer (size: %d bytes)", img_size)
+    except Exception as e:
+        logging.error(f"Failed saving screenshot to buffer: {e}")
+        return
+
+    # שליחה לשרת
+    try:
+        logging.info("Sending CLIENT_SCREENSHOT command to server")
+        send_line(sock, "CLIENT_SCREENSHOT")
+
+        logging.info("Sending image size: %d", img_size)
+        send_line(sock, str(img_size))
+
+        logging.info("Sending raw image bytes...")
+        sock.sendall(img_bytes)
+    except Exception as e:
+        logging.error(f"Failed sending screenshot data: {e}")
+        return
+
+    # קבלת תשובת השרת
+    try:
+        resp = recv_line(sock)
+        logging.info(f"Server responded: {resp}")
+        print("Server:", resp)
+    except Exception as e:
+        logging.error(f"Failed receiving server response: {e}")
+        print("Error receiving response from server:", e)
+
+
+
+
+def main():
+    logging.info("Client starting connection...")
+
+    my_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    try:
+        my_socket.connect((IP, PORT))
+        logging.info(f"Connected to server at {IP}:{PORT}")
+        print("Connected to server")
+    except Exception as e:
+        logging.error(f"Connection failed: {e}")
+        print("ERROR connecting to server:", e)
+        return
+
+
+    while True:
+        choice = input("Choose command:\nDIR/DELETE/COPY/CLIENT_SCREENSHOT/EXIT\n").strip()
+        logging.info(f"User selected option: {choice}")
+
+        if choice == "DIR":
+            path = input("Enter folder path: ")
+            assert isinstance(path, str), "Path must be a string"
+            logging.info(f"Sending DIR command with path: {path}")
+
+            send_line(my_socket, f"DIR {path}")
+            resp = recv_line(my_socket)
+            logging.info(f"Server response: {resp}")
+            print("Server:", resp)
+
+        elif choice == "DELETE":
+            path = input("Enter file path to delete: ")
+            assert isinstance(path, str), "Path must be a string"
+            logging.info(f"Sending DELETE command for file: {path}")
+
+            send_line(my_socket, f"DELETE {path}")
+            resp = recv_line(my_socket)
+            logging.info(f"Server response: {resp}")
+            print("Server:", resp)
+
+        elif choice == "COPY":
+            src = input("Enter source file path: ")
+            dst = input("Enter destination file path: ")
+
+            assert isinstance(src, str), "src must be a string"
+            assert isinstance(dst, str), "dst must be a string"
+
+            logging.info(f"Sending COPY command: {src} -> {dst}")
+            send_line(my_socket, f"COPY {src} {dst}")
+
+            resp = recv_line(my_socket)
+            logging.info(f"Server response: {resp}")
+            print("Server:", resp)
+
+        elif choice == "CLIENT_SCREENSHOT":
+            logging.info("User requested screenshot send")
+            take_screenshot_and_send(my_socket)
+
+        elif choice == "EXIT":
+            logging.info("Sending EXIT command to server")
+            send_line(my_socket, "EXIT")
+            resp = recv_line(my_socket)
+            logging.info(f"Server response: {resp}")
+            print("Server:", resp)
+            break
+
+        else:
+            logging.warning(f"Invalid option selected: {choice}")
+            print("Invalid choice")
+
+    my_socket.close()
+    logging.info("Client closed connection")
+    print("Client closed")
+
+
+if __name__ == "__main__":
+    main()
