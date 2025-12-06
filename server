@@ -1,0 +1,166 @@
+import socket
+import glob
+import os
+import shutil
+import logging
+
+from protocol import send_line, recv_line
+
+
+
+def recv_all(sock, size):
+    """Reads exact amount of bytes from socket."""
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("Client disconnected during binary transfer")
+        data += chunk
+    return data
+
+
+def save_client_screenshot_raw(img_bytes: bytes):
+    assert isinstance(img_bytes, (bytes, bytearray)), \
+        "Expected raw bytes"
+
+    logging.info("Saving client screenshot (raw mode)...")
+
+    try:
+        with open("client_screen.jpg", "wb") as f:
+            f.write(img_bytes)
+
+        logging.info("Screenshot saved successfully")
+        return "RECEIVED_SCREENSHOT"
+
+    except Exception as e:
+        logging.error(f"Saving screenshot failed: {e}")
+        return f"ERROR {e}"
+
+
+
+
+def do_dir(path):
+    assert isinstance(path, str), "path must be a string"
+    logging.info(f"DIR requested for path: {path}")
+
+    files_list = glob.glob(rf"{path}\*.*")
+    if not files_list:
+        logging.info("DIR: No files found")
+        return "NO_FILES"
+
+    result = "OK " + ",".join(files_list)
+    logging.info(f"DIR result: {result}")
+    return result
+
+
+def do_delete(path):
+    assert isinstance(path, str), "path must be a string"
+    logging.info(f"DELETE requested for: {path}")
+
+    if os.path.exists(path):
+        os.remove(path)
+        logging.info("DELETE successful")
+        return "OK"
+    else:
+        logging.error("DELETE failed - file not found")
+        return "ERROR File not found"
+
+
+def do_copy(src, dst):
+    assert isinstance(src, str) and isinstance(dst, str), "src/dst must be strings"
+    logging.info(f"COPY requested: {src} -> {dst}")
+
+    if not os.path.exists(src):
+        logging.error("COPY failed - source not found")
+        return "ERROR Source file not found"
+
+    shutil.copy(src, dst)
+    logging.info("COPY successful")
+    return "OK"
+
+
+
+
+IP = "0.0.0.0"
+PORT = 8820
+
+def main():
+    logging.info(f"Server started on {IP}:{PORT}")
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((IP, PORT))
+    server_socket.listen(1)
+
+    print(f"Server listening on {IP}:{PORT}...")
+
+    client_socket, client_address = server_socket.accept()
+    logging.info(f"Client connected: {client_address}")
+    print("Client connected:", client_address)
+
+    while True:
+        cmd = recv_line(client_socket)
+        logging.info(f"Received raw command: {cmd}")
+
+        if cmd is None:
+            logging.warning("Client disconnected")
+            break
+
+        parts = cmd.split(" ", 1)
+        command = parts[0].upper()
+        args = parts[1] if len(parts) > 1 else ""
+
+        logging.info(f"Parsed command: {command}, args length = {len(args)}")
+
+
+
+        if command == "DIR":
+            result = do_dir(args)
+
+        elif command == "DELETE":
+            result = do_delete(args)
+
+        elif command == "COPY":
+            src_dst = args.split(" ", 1)
+            if len(src_dst) != 2:
+                result = "ERROR Usage: COPY <src> <dst>"
+            else:
+                result = do_copy(*src_dst)
+
+        elif command == "CLIENT_SCREENSHOT":
+
+            logging.info("Receiving screenshot from client...")
+
+            size_str = recv_line(client_socket)
+            if not size_str or not size_str.isdigit():
+                logging.error("Invalid image size from client")
+                result = "ERROR Invalid size"
+            else:
+                img_size = int(size_str)
+                logging.info(f"Expecting {img_size} image bytes")
+
+                try:
+                    img_bytes = recv_all(client_socket, img_size)
+                    result = save_client_screenshot_raw(img_bytes)
+                except Exception as e:
+                    logging.error(f"Image receive failed: {e}")
+                    result = f"ERROR {e}"
+
+        elif command == "EXIT":
+            logging.info("Client requested EXIT")
+            send_line(client_socket, "BYE")
+            break
+
+        else:
+            logging.error("Unknown command received")
+            result = "ERROR Unknown command"
+
+        send_line(client_socket, result)
+        logging.info(f"Command result sent: {result}")
+
+    client_socket.close()
+    server_socket.close()
+    logging.info("Server closed")
+
+
+if __name__ == "__main__":
+    main()
