@@ -1,0 +1,22 @@
+import socket
+
+
+def send_line(sock: socket.socket, text: str):
+    # שולח טקסט + תו סוף שורה
+    data = (text + "\n").encode()
+    sock.sendall(data)
+
+
+def recv_line(sock: socket.socket) -> str | None:
+    # קורא מהסוקט עד שמגיעים ל-\n
+    data = b""
+    while True:
+        chunk = sock.recv(1)  # קורא בייט אחד
+        if not chunk:  # אם הלקוח ניתק
+            if not data:
+                return None
+            break
+        if chunk == b"\n":  # סוף ההודעה
+            break
+        data += chunk
+    return data.decode("utf-8")
